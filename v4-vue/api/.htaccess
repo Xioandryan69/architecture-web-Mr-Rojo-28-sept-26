@@ -1,0 +1,3 @@
+# Apache : redirige /api/... vers api.php (nécessite mod_rewrite)
+RewriteEngine On
+RewriteRule ^api/ api.php [QSA,L]
