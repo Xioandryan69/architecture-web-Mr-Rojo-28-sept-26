@@ -1,0 +1,397 @@
+=== Contenu de : ./modele.php ===
+<?php 
+require __DIR__.'/db.php';
+
+
+
+function listerFormations(int $limit =10,int $offset=0)
+{
+    $pdo=getDb();
+
+    // methode simple 
+    //  $formations = $formation->query('SELECT id, titre, description, niveau FROM formations ORDER BY niveau, titre')->fetchAll();
+    // methode optimiser et securiser 
+    $stmt=$pdo->prepare('SELECT id, titre, description, niveau FROM formations ORDER BY niveau, titre  LIMIT :limit OFFSET :offset ');
+    $stmt->bindValue(':limit', $limit, PDO::PARAM_INT);
+    $stmt->bindValue(':offset', $offset, PDO::PARAM_INT);
+    $stmt->execute();
+    $formations = $stmt->fetchAll(PDO::FETCH_ASSOC);
+    return $formations;
+}
+
+
+function compterFormations(): int
+{
+    $pdo = getDb();
+    return (int) $pdo->query('SELECT COUNT(*) FROM formations')->fetchColumn();
+}
+
+
+
+function getFormationById($idFormation)
+{
+    $pdo=getDb();
+
+    $stmt = $pdo->prepare("SELECT * FROM formations WHERE id = :id");
+    $stmt->bindValue(':id',(int)$idFormation , PDO::PARAM_INT);
+    $stmt->execute();
+    $formation = $stmt->fetch(PDO::FETCH_ASSOC);
+    return $formation;
+}
+
+?>
+
+=== Contenu de : ./README.md ===
+# V1 — Site PHP, rendu côté serveur
+
+Première version de la série « Une page, quatre architectures ».
+Objectif : afficher une liste de formations sous forme de cards.
+Ici, **le serveur fabrique toute la page** : PHP interroge SQLite et renvoie un HTML complet.
+
+## Contenu
+
+| Fichier | Rôle |
+|---|---|
+| `index.php` | requête SQL + boucle PHP qui génère les cards |
+| `db.php` | connexion SQLite (base créée automatiquement au premier lancement) |
+| `init.sql` | création de la table `formations` et 6 lignes d'exemple |
+| `style.css` | mise en forme des cards |
+| `seed.php`, `seed.sql` | génération de milliers de lignes pour le test de charge |
+
+## Lancer
+
+Prérequis : PHP 8 avec l'extension `pdo_sqlite` (`php -m | grep sqlite`).
+
+```bash
+cd v1-php
+php -S localhost:8000
+```
+
+Ouvrir http://localhost:8000
+
+## À observer
+
+1. Afficher le **code source** de la page (Ctrl+U) : les cards y sont déjà écrites.
+   Le navigateur n'a rien calculé, il affiche.
+2. Dans `index.php`, repérer les trois couches mélangées dans un même fichier :
+   accès aux données (SQL), logique (boucle PHP), présentation (HTML).
+3. La fonction `e()` appelle `htmlspecialchars` : on n'insère jamais une donnée brute
+   dans du HTML (protection contre les injections XSS).
+
+
+
+## Test de charge
+
+```bash
+php seed.php          # ajoute 10 000 formations
+php seed.php 50000    # ou une autre quantité
+php seed.php reset    # revenir aux 6 formations d'origine
+```
+
+Recharger la page et observer dans les outils développeur (F12, onglet Réseau,
+cache désactivé) la taille et le temps de chargement du document HTML.
+
+En ligne de commande :
+
+```bash
+curl -o /dev/null -s -w "%{size_download} octets, %{time_total}s\n" http://localhost:8000/
+```
+
+Conservez vos mesures : vous les comparerez avec la version suivante.
+
+## Exercices
+
+1. Ajouter une pagination (`LIMIT` / `OFFSET`, 20 cards par page) et mesurer à nouveau
+   avec 10 000 lignes.
+
+
+``` bash
+curl -s "http://localhost:8000/index.php?limit=20&offset=20"
+
+```  
+2. Déplacer la requête SQL dans un fichier `modele.php` qui expose une fonction
+   `listerFormations()` : premier pas vers une séparation des responsabilités (MVC).
+3. Ajouter une page `detail.php?id=3` qui affiche une seule formation.
+
+
+=== Contenu de : ./seed.sql ===
+-- Génère :n formations fictives (10 000 par défaut via seed.php)
+-- CTE récursive : n(i) produit les nombres 1, 2, 3, … :n
+WITH RECURSIVE n(i) AS (
+    SELECT 1
+    UNION ALL
+    SELECT i + 1 FROM n WHERE i < CAST(:n AS INTEGER)   -- CAST obligatoire, voir seed.php
+)
+INSERT INTO formations (titre, description, niveau)
+SELECT
+    'Formation n° ' || i,
+    'Description générée automatiquement pour le test de charge (ligne ' || i || ').',
+    'L' || (1 + i % 3)          -- répartit sur L1, L2, L3
+FROM n;
+
+
+=== Contenu de : ./detail.php ===
+<?php
+require_once __DIR__ . '/modele.php';
+
+$id = isset($_GET['id']) ? (int) $_GET['id'] : 1;
+$formation = getFormationById($id);
+
+function e(string $texte): string
+{
+    return htmlspecialchars($texte, ENT_QUOTES, 'UTF-8');
+}
+?>
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <title><?= $formation ? e($formation['titre']) : 'Formation non trouvée' ?> — V1 PHP</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <header>
+        <h1>Détail de la formation</h1>
+        <p>V1 — page générée par le serveur (PHP + SQLite)</p>
+    </header>
+
+    <main class="container">
+        <?php if ($formation): ?>
+            <article class="card detail-card">
+                <h2><?= e($formation['titre']) ?></h2>
+                <p><?= e($formation['description']) ?></p>
+                <span class="badge"><?= e($formation['niveau']) ?></span>
+            </article>
+        <?php else: ?>
+            <p class="message">Aucune formation trouvée avec cet identifiant.</p>
+        <?php endif; ?>
+
+        <p><a href="index.php" class="btn-retour">&larr; Retour à la liste</a></p>
+    </main>
+</body>
+</html>
+
+=== Contenu de : ./db.php ===
+<?php
+// Connexion SQLite. La base est créée automatiquement au premier lancement.
+function getDb(): PDO
+{
+    $fichier = __DIR__ . '/data.sqlite';
+    $nouvelle = !file_exists($fichier);
+
+    $db = new PDO('sqlite:' . $fichier);
+    $db->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
+    $db->setAttribute(PDO::ATTR_DEFAULT_FETCH_MODE, PDO::FETCH_ASSOC);
+
+    if ($nouvelle) {
+        $db->exec(file_get_contents(__DIR__ . '/init.sql'));
+    }
+    return $db;
+}
+
+
+=== Contenu de : ./style.css ===
+/* Même feuille de style pour les 4 versions : le rendu ne change pas */
+* { box-sizing: border-box; }
+body {
+    margin: 0;
+    font-family: system-ui, sans-serif;
+    background: #f2f4f7;
+    color: #0c101f;
+}
+header {
+    background: #222e76;
+    color: #fff;
+    padding: 1.2rem 2rem;
+}
+header h1 { margin: 0; font-size: 1.5rem; }
+header p  { margin: .3rem 0 0; opacity: .8; font-size: .9rem; }
+
+.liste {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+    gap: 1.2rem;
+    padding: 2rem;
+    max-width: 1100px;
+    margin: 0 auto;
+}
+.card {
+    background: #fff;
+    border-radius: 10px;
+    padding: 1.2rem;
+    box-shadow: 0 2px 6px rgba(0,0,0,.08);
+}
+.card h2 { margin: 0 0 .5rem; font-size: 1.15rem; color: #222e76; }
+.card p  { margin: 0 0 1rem; font-size: .95rem; line-height: 1.4; }
+.badge {
+    display: inline-block;
+    background: #76b729;
+    color: #fff;
+    border-radius: 999px;
+    padding: .15rem .7rem;
+    font-size: .8rem;
+    font-weight: bold;
+}
+.message { padding: 2rem; text-align: center; color: #6e7385; }
+
+/* Boutons et liens */
+.btn, .btn-retour {
+    display: inline-block;
+    margin-top: .8rem;
+    padding: .4rem .8rem;
+    background: #222e76;
+    color: #fff;
+    text-decoration: none;
+    border-radius: 5px;
+    font-size: .85rem;
+}
+.btn:hover, .btn-retour:hover {
+    background: #192257;
+}
+
+/* Pagination */
+.pagination {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    gap: 1rem;
+    margin: 2rem 0;
+}
+.container {
+    max-width: 800px;
+    margin: 2rem auto;
+    padding: 0 1rem;
+}
+
+
+=== Contenu de : ./init.sql ===
+-- Données communes aux 4 versions
+CREATE TABLE IF NOT EXISTS formations (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    titre       TEXT    NOT NULL,
+    description TEXT    NOT NULL,
+    niveau      TEXT    NOT NULL
+);
+
+INSERT INTO formations (titre, description, niveau) VALUES
+ ('Algorithmique',        'Structures de contrôle, tableaux, complexité.',        'L1'),
+ ('Bases de données',     'Modèle relationnel, SQL, normalisation.',              'L1'),
+ ('Développement web',    'HTML, CSS, PHP et échanges client-serveur.',           'L2'),
+ ('Réseaux',              'Modèle TCP/IP, adressage, services réseau.',           'L2'),
+ ('Développement mobile', 'Applications Android, consommation d''API.',           'L3'),
+ ('Architecture logicielle', 'Couches, API REST, séparation front / back.',      'L3');
+
+
+=== Contenu de : ./copie.sh ===
+#!/bin/bash
+> source.txt
+
+find . -type f ! -name "*.db" ! -name "*.sqlite" !  -name "source.txt" | while read -r file; do
+    echo "=== Contenu de : $file ===" >> source.txt
+    cat "$file" >> source.txt
+    echo -e "\n" >> source.txt # Ajoute des lignes vides pour espacer
+done
+
+
+=== Contenu de : ./seed.php ===
+<?php
+// Remplit la base pour le test de charge V1 / V2.
+//
+//   php seed.php            → ajoute 10 000 lignes
+//   php seed.php 50000      → ajoute 50 000 lignes
+//   php seed.php reset      → supprime la base (retour aux 6 formations)
+//
+// Pour comparer avec une autre version, copier la base :
+//   cp data.sqlite ../<autre-version>/
+require __DIR__ . '/db.php';
+
+$arg = $argv[1] ?? '10000';
+
+if ($arg === 'reset') {
+    @unlink(__DIR__ . '/data.sqlite');
+    echo "Base supprimée. Elle sera recréée au prochain lancement.\n";
+    exit;
+}
+
+$n  = max(1, (int)$arg);
+$db = getDb();
+
+$debut = microtime(true);
+$db->beginTransaction();                 // une seule transaction : insertion rapide
+$stmt = $db->prepare(file_get_contents(__DIR__ . '/seed.sql'));
+// PARAM_INT indispensable : lié comme texte, '10000' serait toujours
+// « plus grand » qu'un entier pour SQLite → récursion infinie.
+$stmt->bindValue(':n', $n, PDO::PARAM_INT);
+$stmt->execute();
+$db->commit();
+
+$total = $db->query('SELECT COUNT(*) FROM formations')->fetchColumn();
+printf("%d lignes ajoutées en %.2f s — total : %d formations\n",
+       $n, microtime(true) - $debut, $total);
+
+
+=== Contenu de : ./index.php ===
+<?php
+require_once __DIR__ . '/modele.php';
+
+// Parameters handling
+$limit = isset($_GET['limit']) ? max(1, (int)$_GET['limit']) : 10;
+
+if (isset($_GET['offset'])) {
+    $offset = max(0, (int)$_GET['offset']);
+    $page = (int) floor($offset / $limit) + 1;
+} else {
+    $page = isset($_GET['page']) ? max(1, (int)$_GET['page']) : 1;
+    }
+    
+$totalFormations = compterFormations();
+$totalPages = max(1, (int) ceil($totalFormations / $limit));
+$page = min($page, $totalPages); // Évite de dépasser la dernière page
+$offset = ($page - 1) * $limit;
+$formations = listerFormations($limit, $offset);
+function e(string $texte): string
+{
+    return htmlspecialchars($texte, ENT_QUOTES, 'UTF-8');
+}
+?>
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <title>Formations — V1 PHP</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <header>
+        <h1>Nos formations</h1>
+        <p>V1 — page générée par le serveur (PHP + SQLite)</p>
+    </header>
+
+    <main>
+        <section class="liste">
+            <?php foreach ($formations as $f): ?>
+                <article class="card">
+                    <h2><?= e($f['titre']) ?></h2>
+                    <p><?= e($f['description']) ?></p>
+                    <span class="badge"><?= e($f['niveau']) ?></span>
+                    <a href="detail.php?id=<?= urlencode((string)$f['id']) ?>" class="btn">Voir le détail</a>
+                </article>
+            <?php endforeach; ?>
+        </section>
+
+        <!-- Pagination -->
+        <nav class="pagination">
+            <?php if ($page > 1): ?>
+                <a href="index.php?page=<?= $page - 1 ?>&limit=<?= $limit ?>" class="btn">&laquo; Précédent</a>
+            <?php endif; ?>
+
+            <span>Page <?= $page ?> sur <?= $totalPages ?></span>
+
+            <?php if ($page < $totalPages): ?>
+                <a href="index.php?page=<?= $page + 1 ?>&limit=<?= $limit ?>" class="btn">Suivant &raquo;</a>
+            <?php endif; ?>
+        </nav>
+    </main>
+</body>
+</html>
+

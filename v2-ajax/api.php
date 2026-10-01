@@ -1,33 +1,41 @@
 <?php
-// V2 — Une API simple, PAS encore REST :
-// l'action est passée en paramètre d'URL (?action=...).
-require __DIR__ . '/db.php';
+// V2 — API simple
+require_once __DIR__ . '/modele.php';
 
-$db     = getDb();
 $action = $_GET['action'] ?? '';
 
 switch ($action) {
 
-    // api.php?action=list  → toutes les formations en JSON
+    // api.php?action=list&limit=10&offset=0
     case 'list':
         header('Content-Type: application/json; charset=utf-8');
-        $rows = $db->query('SELECT * FROM formations ORDER BY niveau, titre')->fetchAll();
-        echo json_encode($rows, JSON_UNESCAPED_UNICODE);
+        $limit = isset($_GET['limit']) ? (int)$_GET['limit'] : 10;
+        $offset = isset($_GET['offset']) ? (int)$_GET['offset'] : 0;
+        
+        $formations = listerFormations($limit, $offset);
+        echo json_encode($formations, JSON_UNESCAPED_UNICODE);
         break;
 
-    // api.php?action=get&id=3  → une formation
+    // api.php?action=get&id=3 -> Récupérer une formation spécifique
     case 'get':
         header('Content-Type: application/json; charset=utf-8');
-        $stmt = $db->prepare('SELECT * FROM formations WHERE id = ?');
-        $stmt->execute([(int)($_GET['id'] ?? 0)]);
-        echo json_encode($stmt->fetch() ?: ['erreur' => 'introuvable'], JSON_UNESCAPED_UNICODE);
+        $id = (int)($_GET['id'] ?? 0);
+        $formation = getFormationById($id);
+
+        if (!$formation) {
+            http_response_code(404);
+            echo json_encode(['erreur' => 'Formation introuvable'], JSON_UNESCAPED_UNICODE);
+            exit;
+        }
+
+        echo json_encode($formation, JSON_UNESCAPED_UNICODE);
         break;
 
-    // Variante pédagogique : le serveur renvoie un FRAGMENT HTML
-    // api.php?action=cards_html  → à comparer avec 'list' (JSON)
+    // Variante HTML fragment
     case 'cards_html':
         header('Content-Type: text/html; charset=utf-8');
-        foreach ($db->query('SELECT * FROM formations ORDER BY niveau, titre') as $f) {
+        $formations = listerFormations(10, 0);
+        foreach ($formations as $f) {
             $t = htmlspecialchars($f['titre']);
             $d = htmlspecialchars($f['description']);
             $n = htmlspecialchars($f['niveau']);
@@ -37,5 +45,6 @@ switch ($action) {
 
     default:
         header('Content-Type: application/json; charset=utf-8');
-        echo json_encode(['erreur' => 'action inconnue']);
+        http_response_code(400);
+        echo json_encode(['erreur' => 'Action inconnue'], JSON_UNESCAPED_UNICODE);
 }

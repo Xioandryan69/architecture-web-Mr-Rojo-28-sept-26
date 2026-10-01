@@ -1,0 +1,478 @@
+=== Contenu de : ./index.html ===
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <title>Formations — V3 REST</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <header>
+        <h1>Nos formations</h1>
+        <p>V3 — page statique + API REST (GET /api/formations)</p>
+    </header>
+
+    <main id="liste" class="liste">
+        <p class="message">Chargement…</p>
+    </main>
+
+    <script src="app.js"></script>
+</body>
+</html>
+
+
+=== Contenu de : ./modele.php ===
+<?php
+// V3 — Modèle d'accès à la base de données SQLite
+require_once __DIR__ . '/db.php';
+
+function countFormations(): int
+{
+    $pdo = getDb();
+    $stmt = $pdo->query("SELECT COUNT(id) FROM formations");
+    return (int) $stmt->fetchColumn();
+}
+
+function listerFormations(int $limit = 100, int $offset = 0): array
+{
+    $pdo = getDb();
+    $stmt = $pdo->prepare('SELECT id, titre, description, niveau FROM formations ORDER BY niveau, titre LIMIT :limit OFFSET :offset');
+    $stmt->bindValue(':limit', $limit, PDO::PARAM_INT);
+    $stmt->bindValue(':offset', $offset, PDO::PARAM_INT);
+    $stmt->execute();
+    return $stmt->fetchAll(PDO::FETCH_ASSOC);
+}
+
+function getFormationById(int $id): ?array
+{
+    $pdo = getDb();
+    $stmt = $pdo->prepare('SELECT * FROM formations WHERE id = :id');
+    $stmt->bindValue(':id', $id, PDO::PARAM_INT);
+    $stmt->execute();
+    $res = $stmt->fetch(PDO::FETCH_ASSOC);
+    return $res ?: null;
+}
+
+function ajouterFormation(string $titre, string $description, string $niveau): array
+{
+    $pdo = getDb();
+    $stmt = $pdo->prepare('INSERT INTO formations (titre, description, niveau) VALUES (:titre, :description, :niveau)');
+    $stmt->execute([
+        ':titre' => $titre,
+        ':description' => $description,
+        ':niveau' => $niveau
+    ]);
+    
+    $id = (int)$pdo->lastInsertId();
+    return [
+        'id' => $id,
+        'titre' => $titre,
+        'description' => $description,
+        'niveau' => $niveau
+    ];
+}
+
+function modifierFormation(int $id, string $titre, string $description, string $niveau): ?array
+{
+    $pdo = getDb();
+    
+    if (!getFormationById($id)) {
+        return null;
+    }
+
+    $stmt = $pdo->prepare('UPDATE formations SET titre = :titre, description = :description, niveau = :niveau WHERE id = :id');
+    $stmt->execute([
+        ':id' => $id,
+        ':titre' => $titre,
+        ':description' => $description,
+        ':niveau' => $niveau
+    ]);
+
+    return [
+        'id' => $id,
+        'titre' => $titre,
+        'description' => $description,
+        'niveau' => $niveau
+    ];
+}
+
+function supprimerFormation(int $id): bool
+{
+    $pdo = getDb();
+    $stmt = $pdo->prepare('DELETE FROM formations WHERE id = :id');
+    $stmt->execute([':id' => $id]);
+    return $stmt->rowCount() > 0;
+}
+
+=== Contenu de : ./.htaccess ===
+# Apache : redirige /api/... vers api.php (nécessite mod_rewrite)
+RewriteEngine On
+RewriteRule ^api/ api.php [QSA,L]
+
+
+=== Contenu de : ./detail.html ===
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <title>Détail de la formation — V3 REST</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <header>
+        <h1>Détail de la formation</h1>
+        <p><a href="index.html" style="color: #fff; text-decoration: underline;">← Retour à la liste</a></p>
+    </header>
+
+    <main id="detail" class="liste">
+        <p class="message">Chargement de la formation…</p>
+    </main>
+
+    <script src="detail.js"></script>
+</body>
+</html>
+
+=== Contenu de : ./README.md ===
+# V3 — API REST
+
+Troisième version de la série « Une page, quatre architectures ».
+Même page, mêmes données, même CSS.
+
+Changement : l'API de la V2 est réorganisée selon les principes **REST**.
+
+| V2 (API simple) | V3 (REST) |
+|---|---|
+| `api.php?action=list` | `GET /api/formations` |
+| `api.php?action=get&id=3` | `GET /api/formations/3` |
+| toujours 200, même en cas d'erreur | 200, 404, 405 selon le résultat |
+
+- L'**URL** désigne une ressource (un nom), pas une action.
+- Le **verbe HTTP** porte l'action : GET lire, POST créer, PUT modifier, DELETE supprimer.
+- Le **code HTTP** porte le résultat.
+
+## Contenu
+
+| Fichier | Rôle |
+|---|---|
+| `index.html` | page statique (plus besoin de PHP pour la page) |
+| `app.js` | identique à la V2, seule l'URL de l'API change |
+| `api.php` | API REST : lecture de la méthode et du chemin, réponses JSON + codes HTTP |
+| `router.php` | routeur pour le serveur intégré de PHP : envoie `/api/...` vers `api.php` |
+| `.htaccess` | même rôle que `router.php` sous Apache |
+| `db.php`, `init.sql`, `style.css` | identiques aux versions précédentes |
+
+## Lancer
+
+Prérequis : PHP 8 avec l'extension `pdo_sqlite`.
+
+```bash
+cd v3-rest
+php -S localhost:8000 router.php
+```
+
+Ouvrir http://localhost:8000
+
+## À observer
+
+1. Tester dans le navigateur :
+   - http://localhost:8000/api/formations
+   - http://localhost:8000/api/formations/3
+   - http://localhost:8000/api/formations/99 → 404
+2. Tester un autre verbe :
+   ```bash
+   curl -i -X DELETE http://localhost:8000/api/formations/3   # → 405
+   ```
+3. Comparer `app.js` avec celui de la V2 : seule l'URL a changé
+   (plus une vérification de `reponse.ok`). Le client dépend d'un contrat,
+   pas de l'implémentation du serveur.
+4. Onglet Réseau des outils développeur : observer la colonne « Statut ».
+
+## Exercices
+
+1. Ajouter `POST /api/formations` : lire le JSON reçu (`file_get_contents('php://input')`),
+   insérer la formation, répondre **201 Created** avec la formation créée.
+2. Ajouter `DELETE /api/formations/{id}` : répondre **204 No Content**, ou 404.
+3. Ajouter `PUT /api/formations/{id}` pour modifier une formation.
+4. Renvoyer **400 Bad Request** quand le titre est vide lors d'un POST.
+
+
+=== Contenu de : ./app.js ===
+// V3 — Client REST JS
+const liste = document.getElementById('liste');
+
+function e(texte) {
+    const div = document.createElement('div');
+    div.textContent = texte;
+    return div.innerHTML;
+}
+
+fetch('/api/formations')
+    .then(reponse => {
+        if (!reponse.ok) throw new Error('HTTP ' + reponse.status);
+        return reponse.json();
+    })
+    .then(formations => {
+        liste.innerHTML = formations.map(f => `
+            <article class="card">
+                <h2><a href="detail.html?id=${f.id}">${e(f.titre)}</a></h2>
+                <p>${e(f.description)}</p>
+                <span class="badge">${e(f.niveau)}</span>
+            </article>
+        `).join('');
+    })
+    .catch(() => {
+        liste.innerHTML = '<p class="message">Erreur de chargement.</p>';
+    });
+
+=== Contenu de : ./db.php ===
+<?php
+// Connexion SQLite. La base est créée automatiquement au premier lancement.
+function getDb(): PDO
+{
+    $fichier = __DIR__ . '/data.sqlite';
+    $nouvelle = !file_exists($fichier);
+
+    $db = new PDO('sqlite:' . $fichier);
+    $db->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
+    $db->setAttribute(PDO::ATTR_DEFAULT_FETCH_MODE, PDO::FETCH_ASSOC);
+
+    if ($nouvelle) {
+        $db->exec(file_get_contents(__DIR__ . '/init.sql'));
+    }
+    return $db;
+}
+
+
+=== Contenu de : ./style.css ===
+/* Même feuille de style pour les 4 versions : le rendu ne change pas */
+* { box-sizing: border-box; }
+body {
+    margin: 0;
+    font-family: system-ui, sans-serif;
+    background: #f2f4f7;
+    color: #0c101f;
+}
+header {
+    background: #222e76;
+    color: #fff;
+    padding: 1.2rem 2rem;
+}
+header h1 { margin: 0; font-size: 1.5rem; }
+header p  { margin: .3rem 0 0; opacity: .8; font-size: .9rem; }
+
+.liste {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+    gap: 1.2rem;
+    padding: 2rem;
+    max-width: 1100px;
+    margin: 0 auto;
+}
+.card {
+    background: #fff;
+    border-radius: 10px;
+    padding: 1.2rem;
+    box-shadow: 0 2px 6px rgba(0,0,0,.08);
+}
+.card h2 { margin: 0 0 .5rem; font-size: 1.15rem; color: #222e76; }
+.card p  { margin: 0 0 1rem; font-size: .95rem; line-height: 1.4; }
+.badge {
+    display: inline-block;
+    background: #76b729;
+    color: #fff;
+    border-radius: 999px;
+    padding: .15rem .7rem;
+    font-size: .8rem;
+    font-weight: bold;
+}
+.message { padding: 2rem; text-align: center; color: #6e7385; }
+
+
+=== Contenu de : ./init.sql ===
+-- Données communes aux 4 versions
+CREATE TABLE IF NOT EXISTS formations (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    titre       TEXT    NOT NULL,
+    description TEXT    NOT NULL,
+    niveau      TEXT    NOT NULL
+);
+
+INSERT INTO formations (titre, description, niveau) VALUES
+ ('Algorithmique',        'Structures de contrôle, tableaux, complexité.',        'L1'),
+ ('Bases de données',     'Modèle relationnel, SQL, normalisation.',              'L1'),
+ ('Développement web',    'HTML, CSS, PHP et échanges client-serveur.',           'L2'),
+ ('Réseaux',              'Modèle TCP/IP, adressage, services réseau.',           'L2'),
+ ('Développement mobile', 'Applications Android, consommation d''API.',           'L3'),
+ ('Architecture logicielle', 'Couches, API REST, séparation front / back.',      'L3');
+
+
+=== Contenu de : ./copie.sh ===
+#!/bin/bash
+> source.txt
+
+find . -type f ! -name "*.db" ! -name "*.sqlite" !  -name "source.txt" | while read -r file; do
+    echo "=== Contenu de : $file ===" >> source.txt
+    cat "$file" >> source.txt
+    echo -e "\n" >> source.txt # Ajoute des lignes vides pour espacer
+done
+
+
+=== Contenu de : ./router.php ===
+<?php
+// Routeur pour le serveur intégré de PHP :  php -S localhost:8000 router.php
+// (sous Apache, le fichier .htaccess joue le même rôle)
+$chemin = parse_url($_SERVER['REQUEST_URI'], PHP_URL_PATH);
+
+if (str_starts_with($chemin, '/api/')) {
+    require __DIR__ . '/api.php';
+    return true;
+}
+return false; // fichiers statiques (index.html, app.js, style.css) servis tels quels
+
+
+=== Contenu de : ./api.php ===
+<?php
+// V3 — API REST complète
+require_once __DIR__ . '/modele.php';
+
+header('Content-Type: application/json; charset=utf-8');
+
+function repondre(int $code, $donnees = null): void
+{
+    http_response_code($code);
+    if ($donnees !== null) {
+        echo json_encode($donnees, JSON_UNESCAPED_UNICODE);
+    }
+    exit;
+}
+
+$methode = $_SERVER['REQUEST_METHOD'];
+$chemin  = parse_url($_SERVER['REQUEST_URI'], PHP_URL_PATH);
+$parties = array_values(array_filter(explode('/', $chemin)));
+
+if (($parties[0] ?? '') !== 'api' || ($parties[1] ?? '') !== 'formations') {
+    repondre(404, ['erreur' => 'Ressource inconnue']);
+}
+
+$id = isset($parties[2]) ? (int)$parties[2] : null;
+
+switch ($methode) {
+    case 'GET':
+        if ($id === null) {
+            $limit = isset($_GET['limit']) ? (int)$_GET['limit'] : 100;
+            $offset = isset($_GET['offset']) ? (int)$_GET['offset'] : 0;
+            repondre(200, listerFormations($limit, $offset));
+        } else {
+            $formation = getFormationById($id);
+            $formation 
+                ? repondre(200, $formation) 
+                : repondre(404, ['erreur' => "Formation $id introuvable"]);
+        }
+        break;
+
+    case 'POST':
+        if ($id !== null) {
+            header('Allow: GET, PUT, DELETE');
+            repondre(405, ['erreur' => 'Impossible d\'exécuter POST sur un élément spécifique']);
+        }
+
+        $input = json_decode(file_get_contents('php://input'), true) ?? [];
+        $titre = trim($input['titre'] ?? '');
+        $description = trim($input['description'] ?? '');
+        $niveau = trim($input['niveau'] ?? 'L1');
+
+        // Exercice 4 : Renvoyer 400 Bad Request si le titre est vide
+        if (empty($titre)) {
+            repondre(400, ['erreur' => 'Le champ titre est obligatoire']);
+        }
+
+        // Exercice 1 : POST /api/formations -> 201 Created
+        $nouvelleFormation = ajouterFormation($titre, $description, $niveau);
+        repondre(201, $nouvelleFormation);
+        break;
+
+    case 'PUT':
+        if ($id === null) {
+            header('Allow: GET, POST');
+            repondre(405, ['erreur' => 'Un identifiant est requis pour modifier une formation']);
+        }
+
+        $input = json_decode(file_get_contents('php://input'), true) ?? [];
+        $titre = trim($input['titre'] ?? '');
+        $description = trim($input['description'] ?? '');
+        $niveau = trim($input['niveau'] ?? 'L1');
+
+        // Validation du titre
+        if (empty($titre)) {
+            repondre(400, ['erreur' => 'Le champ titre est obligatoire']);
+        }
+
+        // Exercice 3 : PUT /api/formations/{id}
+        $formationModifiee = modifierFormation($id, $titre, $description, $niveau);
+        if (!$formationModifiee) {
+            repondre(404, ['erreur' => "Formation $id introuvable"]);
+        }
+
+        repondre(200, $formationModifiee);
+        break;
+
+    case 'DELETE':
+        if ($id === null) {
+            header('Allow: GET, POST');
+            repondre(405, ['erreur' => 'Un identifiant est requis pour la suppression']);
+        }
+
+        // Exercice 2 : DELETE /api/formations/{id} -> 204 No Content ou 404
+        $supprime = supprimerFormation($id);
+        if (!$supprime) {
+            repondre(404, ['erreur' => "Formation $id introuvable"]);
+        }
+
+        repondre(204);
+        break;
+
+    default:
+        header('Allow: GET, POST, PUT, DELETE');
+        repondre(405, ['erreur' => 'Méthode non autorisée']);
+}
+
+=== Contenu de : ./detail.js ===
+const conteneurDetail = document.getElementById('detail');
+
+function e(texte) {
+    const div = document.createElement('div');
+    div.textContent = texte;
+    return div.innerHTML;
+}
+
+const params = new URLSearchParams(window.location.search);
+const id = params.get('id');
+
+if (!id) {
+    conteneurDetail.innerHTML = '<p class="message">Aucun identifiant de formation renseigné.</p>';
+} else {
+    fetch(`/api/formations/${encodeURIComponent(id)}`)
+        .then(async response => {
+            if (!response.ok) {
+                const errorData = await response.json().catch(() => ({}));
+                throw new Error(errorData.erreur || `Erreur HTTP ${response.status}`);
+            }
+            return response.json();
+        })
+        .then(f => {
+            conteneurDetail.innerHTML = `
+                <article class="card" style="grid-column: 1 / -1;">
+                    <h2>${e(f.titre)}</h2>
+                    <p>${e(f.description)}</p>
+                    <span class="badge">${e(f.niveau)}</span>
+                    <p style="margin-top: 1rem; color: #6e7385; font-size: 0.85rem;">
+                        Identifiant : ${f.id}
+                    </p>
+                </article>
+            `;
+        })
+        .catch(err => {
+            conteneurDetail.innerHTML = `<p class="message">${e(err.message)}</p>`;
+        });
+}
+

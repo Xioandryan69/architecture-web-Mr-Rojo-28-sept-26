@@ -48,3 +48,15 @@ header p  { margin: .3rem 0 0; opacity: .8; font-size: .9rem; }
     border-radius: 999px; padding: .3rem 1rem; cursor: pointer;
 }
 .filtres button.actif { background: #222e76; color: #fff; }
+
+.champ-recherche {
+    border: 1px solid #222e76;
+    border-radius: 999px;
+    padding: .3rem 1rem;
+    font-size: .9rem;
+    outline: none;
+    margin-left: auto; /* Aligne la barre à droite */
+}
+.champ-recherche:focus {
+    box-shadow: 0 0 0 2px rgba(34, 46, 118, 0.2);
+}

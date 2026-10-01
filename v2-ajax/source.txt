@@ -1,0 +1,441 @@
+=== Contenu de : ./modele.php ===
+<?php 
+
+require_once __DIR__ . '/db.php';
+
+function countFormation(): int
+{
+    $pdo = getDb();
+    $stmt = $pdo->query("SELECT count(id) FROM formations");
+    return (int) $stmt->fetchColumn();
+}
+
+function listerFormations(int $limit = 10, int $offset = 0): array
+{
+    $pdo = getDb();
+    $stmt = $pdo->prepare('SELECT id, titre, description, niveau FROM formations ORDER BY niveau, titre LIMIT :limit OFFSET :offset');
+    $stmt->bindValue(':limit', $limit, PDO::PARAM_INT);
+    $stmt->bindValue(':offset', $offset, PDO::PARAM_INT);
+    $stmt->execute();
+    return $stmt->fetchAll(PDO::FETCH_ASSOC);
+}
+
+function getFormationById(int $idFormation)
+{
+    $pdo = getDb();
+    $stmt = $pdo->prepare("SELECT * FROM formations WHERE id = :id");
+    $stmt->bindValue(':id', $idFormation, PDO::PARAM_INT);
+    $stmt->execute();
+    return $stmt->fetch(PDO::FETCH_ASSOC);
+}
+
+=== Contenu de : ./README.md ===
+# V2 — Site PHP + AJAX (API simple)
+
+Deuxième version de la série « Une page, quatre architectures ».
+Même page, mêmes données, même CSS que la V1.
+
+Changement : PHP sert toujours la page, mais **sans la liste**. Un script JavaScript
+appelle ensuite `api.php`, qui renvoie des **données JSON**, et le navigateur
+construit les cards lui-même.
+
+Ce n'est pas encore une API REST : l'action est passée en paramètre d'URL
+(`?action=list`).
+
+## Contenu
+
+| Fichier | Rôle |
+|---|---|
+| `index.php` | page avec un conteneur vide `#liste` |
+| `app.js` | `fetch` vers l'API, puis construction des cards en JavaScript |
+| `api.php` | API simple : `?action=list`, `?action=get&id=…`, `?action=cards_html` |
+| `db.php`, `init.sql` | connexion et données (identiques à la V1) |
+| `style.css` | identique à la V1 |
+| `seed.php`, `seed.sql` | génération de milliers de lignes pour le test de charge |
+
+## Lancer
+
+Prérequis : PHP 8 avec l'extension `pdo_sqlite`.
+
+```bash
+cd v2-ajax
+php -S localhost:8000
+```
+
+Ouvrir http://localhost:8000
+
+## À observer
+
+1. Afficher le **code source** de la page (Ctrl+U) : la liste est vide.
+   Pourtant les cards s'affichent : c'est `app.js` qui les a ajoutées.
+2. Outils développeur (F12), onglet Réseau : deux requêtes au lieu d'une,
+   la page puis `api.php?action=list`.
+3. Ouvrir directement dans le navigateur :
+   - http://localhost:8000/api.php?action=list → des **données** (JSON)
+   - http://localhost:8000/api.php?action=cards_html → de la **présentation** (fragment HTML)
+
+   Même contenu, deux philosophies. Laquelle permettrait à une application mobile
+   de réutiliser l'API ?
+4. Dans `app.js`, les cards sont construites en concaténant des chaînes de caractères.
+   Imaginez ce code avec un filtre, un formulaire et des mises à jour partielles.
+5. Tester `api.php?action=get&id=999` : la réponse signale une erreur,
+   mais quel est le code HTTP renvoyé ?
+
+## Test de charge : comparaison avec la V1
+
+```bash
+php seed.php          # ajoute 10 000 formations
+php seed.php reset    # revenir aux 6 formations d'origine
+```
+
+Pour comparer sur exactement les mêmes données, vous pouvez aussi copier la base
+de la V1 : `cp ../v1-php/data.sqlite .`
+
+Mesurer dans l'onglet Réseau (cache désactivé) la taille de la page et celle de
+`api.php?action=list`, puis dans l'onglet Performance le délai avant l'affichage
+des cards.
+
+```bash
+curl -o /dev/null -s -w "%{size_download} octets, %{time_total}s\n" http://localhost:8000/
+curl -o /dev/null -s -w "%{size_download} octets, %{time_total}s\n" "http://localhost:8000/api.php?action=list"
+```
+
+Questions : quelle version transfère le moins de données ? Laquelle affiche
+les premières cards le plus tôt ? Où se fait le travail de construction du HTML ?
+
+## Exercices
+
+1. Ajouter une pagination à l'API (`?action=list&page=2`) et un bouton
+   « Charger plus » dans `app.js`. Mesurer à nouveau avec 10 000 lignes.
+2. Créer une page détail qui appelle `api.php?action=get&id=…`.
+3. Faire renvoyer un code HTTP 404 par `action=get` quand la formation n'existe pas.
+
+
+=== Contenu de : ./seed.sql ===
+-- Génère :n formations fictives (10 000 par défaut via seed.php)
+-- CTE récursive : n(i) produit les nombres 1, 2, 3, … :n
+WITH RECURSIVE n(i) AS (
+    SELECT 1
+    UNION ALL
+    SELECT i + 1 FROM n WHERE i < CAST(:n AS INTEGER)   -- CAST obligatoire, voir seed.php
+)
+INSERT INTO formations (titre, description, niveau)
+SELECT
+    'Formation n° ' || i,
+    'Description générée automatiquement pour le test de charge (ligne ' || i || ').',
+    'L' || (1 + i % 3)          -- répartit sur L1, L2, L3
+FROM n;
+
+
+=== Contenu de : ./app.js ===
+// V2 — Le navigateur récupère du JSON et construit les cards lui-même.
+const liste = document.getElementById('liste');
+
+// Échappement minimal côté client (même rôle que htmlspecialchars)
+function e(texte) {
+    const div = document.createElement('div');
+    div.textContent = texte;
+    return div.innerHTML;
+}
+
+fetch('api.php?action=list')
+    .then(reponse => reponse.json())
+    .then(formations => {
+        // On fabrique du HTML en chaînes de caractères :
+        // ça marche… mais imaginez 10 composants et des mises à jour.
+        liste.innerHTML = formations.map(f => `
+            <article class="card">
+                <h2>${e(f.titre)}</h2>
+                <p>${e(f.description)}</p>
+                <span class="badge">${e(f.niveau)}</span>
+            </article>
+        `).join('');
+    })
+    .catch(() => {
+        liste.innerHTML = '<p class="message">Erreur de chargement.</p>';
+    });
+
+/* Variante « fragment HTML » : le serveur fabrique encore les cards.
+fetch('api.php?action=cards_html')
+    .then(r => r.text())
+    .then(html => { liste.innerHTML = html; });
+*/
+
+
+=== Contenu de : ./detail.php ===
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <title>Détail de la formation — V2 AJAX</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <header>
+        <h1>Détail de la formation</h1>
+        <p><a href="index.php" style="color: #fff; text-decoration: underline;">← Retour à la liste</a></p>
+    </header>
+
+    <main id="detail" class="liste">
+        <p class="message">Chargement de la formation…</p>
+    </main>
+
+    <script src="detail.js"></script>
+</body>
+</html>
+
+=== Contenu de : ./db.php ===
+<?php
+// Connexion SQLite. La base est créée automatiquement au premier lancement.
+function getDb(): PDO
+{
+    $fichier = __DIR__ . '/data.sqlite';
+    $nouvelle = !file_exists($fichier);
+
+    $db = new PDO('sqlite:' . $fichier);
+    $db->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
+    $db->setAttribute(PDO::ATTR_DEFAULT_FETCH_MODE, PDO::FETCH_ASSOC);
+
+    if ($nouvelle) {
+        $db->exec(file_get_contents(__DIR__ . '/init.sql'));
+    }
+    return $db;
+}
+
+
+=== Contenu de : ./style.css ===
+/* Même feuille de style pour les 4 versions : le rendu ne change pas */
+* { box-sizing: border-box; }
+body {
+    margin: 0;
+    font-family: system-ui, sans-serif;
+    background: #f2f4f7;
+    color: #0c101f;
+}
+header {
+    background: #222e76;
+    color: #fff;
+    padding: 1.2rem 2rem;
+}
+header h1 { margin: 0; font-size: 1.5rem; }
+header p  { margin: .3rem 0 0; opacity: .8; font-size: .9rem; }
+
+.liste {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+    gap: 1.2rem;
+    padding: 2rem;
+    max-width: 1100px;
+    margin: 0 auto;
+}
+.card {
+    background: #fff;
+    border-radius: 10px;
+    padding: 1.2rem;
+    box-shadow: 0 2px 6px rgba(0,0,0,.08);
+}
+.card h2 { margin: 0 0 .5rem; font-size: 1.15rem; color: #222e76; }
+.card p  { margin: 0 0 1rem; font-size: .95rem; line-height: 1.4; }
+.badge {
+    display: inline-block;
+    background: #76b729;
+    color: #fff;
+    border-radius: 999px;
+    padding: .15rem .7rem;
+    font-size: .8rem;
+    font-weight: bold;
+}
+.message { padding: 2rem; text-align: center; color: #6e7385; }
+
+
+=== Contenu de : ./init.sql ===
+-- Données communes aux 4 versions
+CREATE TABLE IF NOT EXISTS formations (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    titre       TEXT    NOT NULL,
+    description TEXT    NOT NULL,
+    niveau      TEXT    NOT NULL
+);
+
+INSERT INTO formations (titre, description, niveau) VALUES
+ ('Algorithmique',        'Structures de contrôle, tableaux, complexité.',        'L1'),
+ ('Bases de données',     'Modèle relationnel, SQL, normalisation.',              'L1'),
+ ('Développement web',    'HTML, CSS, PHP et échanges client-serveur.',           'L2'),
+ ('Réseaux',              'Modèle TCP/IP, adressage, services réseau.',           'L2'),
+ ('Développement mobile', 'Applications Android, consommation d''API.',           'L3'),
+ ('Architecture logicielle', 'Couches, API REST, séparation front / back.',      'L3');
+
+
+=== Contenu de : ./copie.sh ===
+#!/bin/bash
+> source.txt
+
+find . -type f ! -name "*.db" ! -name "*.sqlite" !  -name "source.txt" | while read -r file; do
+    echo "=== Contenu de : $file ===" >> source.txt
+    cat "$file" >> source.txt
+    echo -e "\n" >> source.txt # Ajoute des lignes vides pour espacer
+done
+
+
+=== Contenu de : ./seed.php ===
+<?php
+// Remplit la base pour le test de charge V1 / V2.
+//
+//   php seed.php            → ajoute 10 000 lignes
+//   php seed.php 50000      → ajoute 50 000 lignes
+//   php seed.php reset      → supprime la base (retour aux 6 formations)
+//
+// Pour comparer avec une autre version, copier la base :
+//   cp data.sqlite ../<autre-version>/
+require __DIR__ . '/db.php';
+
+$arg = $argv[1] ?? '10000';
+
+if ($arg === 'reset') {
+    @unlink(__DIR__ . '/data.sqlite');
+    echo "Base supprimée. Elle sera recréée au prochain lancement.\n";
+    exit;
+}
+
+$n  = max(1, (int)$arg);
+$db = getDb();
+
+$debut = microtime(true);
+$db->beginTransaction();                 // une seule transaction : insertion rapide
+$stmt = $db->prepare(file_get_contents(__DIR__ . '/seed.sql'));
+// PARAM_INT indispensable : lié comme texte, '10000' serait toujours
+// « plus grand » qu'un entier pour SQLite → récursion infinie.
+$stmt->bindValue(':n', $n, PDO::PARAM_INT);
+$stmt->execute();
+$db->commit();
+
+$total = $db->query('SELECT COUNT(*) FROM formations')->fetchColumn();
+printf("%d lignes ajoutées en %.2f s — total : %d formations\n",
+       $n, microtime(true) - $debut, $total);
+
+
+=== Contenu de : ./index.php ===
+<?php
+// V2 — PHP sert encore la page, mais la liste arrive ensuite par AJAX.
+?>
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <title>Formations — V2 AJAX</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <header>
+        <h1>Nos formations</h1>
+        <p>V2 — page PHP + liste chargée en AJAX (api.php)</p>
+    </header>
+
+    <!-- Conteneur vide : il sera rempli par app.js -->
+    <main id="liste" class="liste">
+        <p class="message">Chargement…</p>
+    </main>
+
+    <script src="app.js"></script>
+</body>
+</html>
+
+
+=== Contenu de : ./api.php ===
+<?php
+// V2 — API simple
+require_once __DIR__ . '/modele.php';
+
+$action = $_GET['action'] ?? '';
+
+switch ($action) {
+
+    // api.php?action=list&limit=10&offset=0
+    case 'list':
+        header('Content-Type: application/json; charset=utf-8');
+        $limit = isset($_GET['limit']) ? (int)$_GET['limit'] : 10;
+        $offset = isset($_GET['offset']) ? (int)$_GET['offset'] : 0;
+        
+        $formations = listerFormations($limit, $offset);
+        echo json_encode($formations, JSON_UNESCAPED_UNICODE);
+        break;
+
+    // api.php?action=get&id=3 -> Récupérer une formation spécifique
+    case 'get':
+        header('Content-Type: application/json; charset=utf-8');
+        $id = (int)($_GET['id'] ?? 0);
+        $formation = getFormationById($id);
+
+        if (!$formation) {
+            http_response_code(404);
+            echo json_encode(['erreur' => 'Formation introuvable'], JSON_UNESCAPED_UNICODE);
+            exit;
+        }
+
+        echo json_encode($formation, JSON_UNESCAPED_UNICODE);
+        break;
+
+    // Variante HTML fragment
+    case 'cards_html':
+        header('Content-Type: text/html; charset=utf-8');
+        $formations = listerFormations(10, 0);
+        foreach ($formations as $f) {
+            $t = htmlspecialchars($f['titre']);
+            $d = htmlspecialchars($f['description']);
+            $n = htmlspecialchars($f['niveau']);
+            echo "<article class=\"card\"><h2>$t</h2><p>$d</p><span class=\"badge\">$n</span></article>\n";
+        }
+        break;
+
+    default:
+        header('Content-Type: application/json; charset=utf-8');
+        http_response_code(400);
+        echo json_encode(['erreur' => 'Action inconnue'], JSON_UNESCAPED_UNICODE);
+}
+
+=== Contenu de : ./detail.js ===
+// detail.js
+const conteneurDetail = document.getElementById('detail');
+
+// Échappement HTML sécurisé
+function e(texte) {
+    const div = document.createElement('div');
+    div.textContent = texte;
+    return div.innerHTML;
+}
+
+// Récupération de l'ID depuis l'URL (?id=X)
+const params = new URLSearchParams(window.location.search);
+const id = params.get('id');
+
+if (!id) {
+    conteneurDetail.innerHTML = '<p class="message">Aucun identifiant de formation renseigné.</p>';
+} else {
+    // Appel à l'API backend
+    fetch(`api.php?action=get&id=${encodeURIComponent(id)}`)
+        .then(async response => {
+            if (!response.ok) {
+                // Gestion de l'erreur (404 par exemple)
+                const errorData = await response.json().catch(() => ({}));
+                throw new Error(errorData.erreur || 'Formation introuvable');
+            }
+            return response.json();
+        })
+        .then(f => {
+            // Affichage de la carte de détail
+            conteneurDetail.innerHTML = `
+                <article class="card" style="grid-column: 1 / -1;">
+                    <h2>${e(f.titre)}</h2>
+                    <p>${e(f.description)}</p>
+                    <span class="badge">${e(f.niveau)}</span>
+                    <p style="margin-top: 1rem; color: #6e7385; font-size: 0.85rem;">
+                        Identifiant : ${f.id}
+                    </p>
+                </article>
+            `;
+        })
+        .catch(err => {
+            conteneurDetail.innerHTML = `<p class="message">${e(err.message)}</p>`;
+        });
+}
+

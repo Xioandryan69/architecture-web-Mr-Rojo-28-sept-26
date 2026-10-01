@@ -40,3 +40,32 @@ header p  { margin: .3rem 0 0; opacity: .8; font-size: .9rem; }
     font-weight: bold;
 }
 .message { padding: 2rem; text-align: center; color: #6e7385; }
+
+/* Boutons et liens */
+.btn, .btn-retour {
+    display: inline-block;
+    margin-top: .8rem;
+    padding: .4rem .8rem;
+    background: #222e76;
+    color: #fff;
+    text-decoration: none;
+    border-radius: 5px;
+    font-size: .85rem;
+}
+.btn:hover, .btn-retour:hover {
+    background: #192257;
+}
+
+/* Pagination */
+.pagination {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    gap: 1rem;
+    margin: 2rem 0;
+}
+.container {
+    max-width: 800px;
+    margin: 2rem auto;
+    padding: 0 1rem;
+}

@@ -34,6 +34,8 @@ Ouvrir http://localhost:8000
 3. La fonction `e()` appelle `htmlspecialchars` : on n'insère jamais une donnée brute
    dans du HTML (protection contre les injections XSS).
 
+
+
 ## Test de charge
 
 ```bash
@@ -57,6 +59,12 @@ Conservez vos mesures : vous les comparerez avec la version suivante.
 
 1. Ajouter une pagination (`LIMIT` / `OFFSET`, 20 cards par page) et mesurer à nouveau
    avec 10 000 lignes.
+
+
+``` bash
+curl -s "http://localhost:8000/index.php?limit=20&offset=20"
+
+```  
 2. Déplacer la requête SQL dans un fichier `modele.php` qui expose une fonction
    `listerFormations()` : premier pas vers une séparation des responsabilités (MVC).
 3. Ajouter une page `detail.php?id=3` qui affiche une seule formation.
